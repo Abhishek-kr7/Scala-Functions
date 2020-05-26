@@ -1,0 +1,77 @@
+Raw
++----+------+------+------+
+|s.no|field1|field2|field3|
++----+------+------+------+
+|   1|     a|     b|     j|
+|   2|     c|     d|     k|
++----+------+------+------+
+
+Output
++---+------+---+
+|sno|   key|val|
++---+------+---+
+|  1|field1|  a|
+|  1|field2|  b|
+|  1|field3|  j|
+|  2|field1|  c|
+|  2|field2|  d|
+|  2|field3|  k|
++---+------+---+
+
+
+import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.functions.{array, col, explode, lit, struct}
+
+def toLong(df: DataFrame, by: Seq[String]): DataFrame = {
+  val (cols, types) = df.dtypes.filter{ case (c, _) => !by.contains(c)}.unzip
+  require(types.distinct.size == 1, s"${types.distinct.toString}.length != 1")
+
+  val kvs = explode(array(
+    cols.map(c => struct(lit(c).alias("key"), col(c).alias("val"))): _*
+  ))
+
+  val byExprs = by.map(col(_))
+
+  df
+    .select(byExprs :+ kvs.alias("_kvs"): _*)
+    .select(byExprs ++ Seq($"_kvs.key", $"_kvs.val"): _*)
+}
+
+val df = Seq((1, "a", "b", "j"),(2, "c", "d", "k")).toDF("sno", "field1", "field2", "field3")
+
+scala> toLong(df, Seq("sno")).show()
++---+------+---+
+|sno|   key|val|
++---+------+---+
+|  1|field1|  a|
+|  1|field2|  b|
+|  1|field3|  j|
+|  2|field1|  c|
+|  2|field2|  d|
+|  2|field3|  k|
++---+------+---+
+
+
+==========================================================================================
+
+
+Equivalent Python Function
+from pyspark.sql.functions import array, col, explode, struct, lit
+
+df = sc.parallelize([(1, 0.0, 0.6), (1, 0.6, 0.7)]).toDF(["A", "col_1", "col_2"])
+
+def to_long(df, by):
+
+    # Filter dtypes and split into column names and type description
+    cols, dtypes = zip(*((c, t) for (c, t) in df.dtypes if c not in by))
+    # Spark SQL supports only homogeneous columns
+    assert len(set(dtypes)) == 1, "All columns have to be of the same type"
+
+    # Create and explode an array of (column_name, column_value) structs
+    kvs = explode(array([
+      struct(lit(c).alias("key"), col(c).alias("val")) for c in cols
+    ])).alias("kvs")
+
+    return df.select(by + [kvs]).select(by + ["kvs.key", "kvs.val"])
+
+to_long(df, ["A"])
